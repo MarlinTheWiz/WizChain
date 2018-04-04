@@ -86,3 +86,100 @@ var isValidNewBlock = (newBlock, previousBlock) => {
     }
     return true;
 };
+
+/**
+ * Function to choose block with longest chain
+ * Should always be only one explicit set of blocks in the chain at a given time. 
+ * In case of conflicts (e.g. two nodes both generate block number 72) 
+ * we choose the chain that has the longest number of blocks.
+ * @param {Block} newBlocks 
+ */
+var replaceChain = (newBlocks) => {
+    if (isValidChain(newBlocks) && newBlocks.length > blockchain.length) {
+        console.log('Received blockchain is valid. Replacing current blockchain with received blockchain');
+        blockchain = newBlocks;
+        broadcast(responseLatestMsg());
+    } else {
+        console.log('Received blockchain invalid');
+    }
+};
+
+/**
+ * Communicating with other nodes:
+ * An essential part of a node is to share and sync the blockchain with other nodes. 
+ * The following rules are used to keep the network in sync.
+ * When a node generates a new block, it broadcasts it to the network
+ * When a node connects to a new peer it querys for the latest block
+ * When a node encounters a block that has an index larger than the current known block, 
+ * it either adds the block the its current chain or querys for the full blockchain.
+ */
+
+ /**
+  * Controlling the node
+  * The user must be able to control the node in some way. This is done by setting up a HTTP server.
+  */
+var initHttpServer = () => {
+    var app = express();
+    app.use(bodyParser.json());
+
+    app.get('/blocks', (req, res) => res.send(JSON.stringify(blockchain)));
+    app.post('/mineBlock', (req, res) => {
+        var newBlock = generateNextBlock(req.body.data);
+        addBlock(newBlock);
+        broadcast(responseLatestMsg());
+        console.log('block added: ' + JSON.stringify(newBlock));
+        res.send();
+    });
+    app.get('/peers', (req, res) => {
+        res.send(sockets.map(s => s._socket.remoteAddress + ':' + s._socket.remotePort));
+    });
+    app.post('/addPeer', (req, res) => {
+        connectToPeers([req.body.peer]);
+        res.send();
+    });
+    app.listen(http_port, () => console.log('Listening http on port: ' + http_port));
+};
+
+/**
+ * As seen, the user is able to interact with the node in the following ways:
+ * List all blocks
+ * Create a new block with a content given by the user
+ * List or add peers
+ * 
+ * The most straightforward way to control the node is e.g. with Curl:
+ * #get all blocks from the node
+ * curl http://localhost:3001/blocks
+ */
+
+var isValidChain = (blockchainToValidate) => {
+    if (JSON.stringify(blockchainToValidate[0]) !== JSON.stringify(getGenesisBlock())) {
+        return false;
+    }
+    var tempBlocks = [blockchainToValidate[0]];
+    for (var i = 1; i < blockchainToValidate.length; i++) {
+        if (isValidNewBlock(blockchainToValidate[i], tempBlocks[i - 1])) {
+            tempBlocks.push(blockchainToValidate[i]);
+        } else {
+            return false;
+        }
+    }
+    return true;
+};
+
+var getLatestBlock = () => blockchain[blockchain.length - 1];
+var queryChainLengthMsg = () => ({'type': MessageType.QUERY_LATEST});
+var queryAllMsg = () => ({'type': MessageType.QUERY_ALL});
+var responseChainMsg = () =>({
+    'type': MessageType.RESPONSE_BLOCKCHAIN, 'data': JSON.stringify(blockchain)
+});
+var responseLatestMsg = () => ({
+    'type': MessageType.RESPONSE_BLOCKCHAIN,
+    'data': JSON.stringify([getLatestBlock()])
+});
+
+var write = (ws, message) => ws.send(JSON.stringify(message));
+var broadcast = (message) => sockets.forEach(socket => write(socket, message));
+
+connectToPeers(initialPeers);
+initHttpServer();
+initP2PServer();
